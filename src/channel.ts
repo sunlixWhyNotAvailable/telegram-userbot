@@ -37,6 +37,11 @@ import {
   resolveAllowFrom,
   resolveGroups,
   resolveGroupConfig,
+  resolveSecretString,
+  resolveOutboundPolicy,
+  assertOutboundTargetAllowed,
+  resolveMediaPolicy,
+  validateMediaFile,
   resolveActiveUsername,
   isSenderAllowed,
   hasTelegramMention,
@@ -71,6 +76,11 @@ function parseOptionalThreadId(value: unknown): number | undefined {
 }
 
 export const createChannelPlugin = (runtimes: RuntimeMap) => {
+  const accountSecurity = new Map<string, {
+    outbound: PluginConfig["outbound"];
+    media: PluginConfig["media"];
+  }>();
+
   const resolveRuntimeAccountId = (cfg: any, preferred?: string | null): string | undefined => {
     const configured = resolveConfiguredAccountId(cfg, preferred);
     if (configured && runtimes.has(configured)) {
@@ -82,6 +92,26 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
     }
 
     return configured ?? runtimes.keys().next().value;
+  };
+
+  const readAccountConfig = (cfg: any, accountId?: string | null): Record<string, unknown> => {
+    if (!accountId) {
+      return {};
+    }
+
+    const account = cfg?.channels?.[ CHANNEL_ID ]?.accounts?.[ accountId ];
+    return account && typeof account === "object" && !Array.isArray(account)
+      ? account as Record<string, unknown>
+      : {};
+  };
+
+  const resolveAccountOutboundPolicy = (cfg: any, accountId?: string | null): PluginConfig["outbound"] => {
+    const runtimePolicy = accountId ? accountSecurity.get(accountId)?.outbound : undefined;
+    return runtimePolicy ?? resolveOutboundPolicy(readAccountConfig(cfg, accountId)?.outbound);
+  };
+
+  const resolveAccountMediaPolicy = (accountId?: string | null): PluginConfig["media"] => {
+    return (accountId ? accountSecurity.get(accountId)?.media : undefined) ?? resolveMediaPolicy(undefined);
   };
 
   return {
@@ -135,10 +165,12 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
 
         return {
           apiId: Number(account?.apiId),
-          apiHash: String(account?.apiHash ?? ""),
-          sessionString: String(account?.sessionString ?? ""),
+          apiHash: resolveSecretString(account?.apiHash, account?.apiHashEnv),
+          sessionString: resolveSecretString(account?.sessionString, account?.sessionStringEnv),
           allowFrom: resolveAllowFrom(account?.allowFrom),
           groups: resolveGroups(account?.groups),
+          outbound: resolveOutboundPolicy(account?.outbound),
+          media: resolveMediaPolicy(account?.media),
           enabled: account?.enabled,
           accountId,
         };
@@ -159,11 +191,25 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
           runtimes.delete(accountId);
         }
 
+        if (!Number.isSafeInteger(account.apiId) || account.apiId <= 0) {
+          throw new Error("telegram-userbot: apiId must be configured");
+        }
+        if (!account.apiHash) {
+          throw new Error("telegram-userbot: apiHash is not configured or the apiHashEnv variable is empty");
+        }
+        if (!account.sessionString) {
+          throw new Error("telegram-userbot: sessionString is not configured or the sessionStringEnv variable is empty");
+        }
+
         const gram = new GramJsClientManager(account);
         await gram.start();
         runtimes.set(accountId, gram);
+        accountSecurity.set(accountId, {
+          outbound: account.outbound,
+          media: account.media,
+        });
         const pairing = createChannelPairingController({
-          core: { channel: channelRuntime },
+          core: { channel: channelRuntime } as any,
           channel: "telegram-userbot",
           accountId,
         });
@@ -407,6 +453,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 runtime: channelRuntime,
                 sessionStore: cfg?.session?.store,
               });
+              const routeAccountId = (route as { accountId?: string }).accountId ?? accountId;
               const wasMentioned = hasTelegramMention({
                 cfg,
                 agentId: route.agentId,
@@ -430,6 +477,8 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 },
               });
 
+              const replyToSelfAllowed = groupConfig.allowReplyToSelf === true;
+
               log?.info?.("telegram-userbot group mention gate", {
                 accountId,
                 chatId: normalized.chatId,
@@ -439,11 +488,12 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 hasEntities: Array.isArray(rawMessage?.entities) ? rawMessage.entities.length : 0,
                 wasMentioned,
                 wasReplyToSelf,
+                replyToSelfAllowed,
                 shouldSkip: mentionDecision.shouldSkip,
-                text,
+                textLength: text.length,
               });
 
-              if (groupConfig.groupPolicy === "mention" && mentionDecision.shouldSkip && !wasReplyToSelf) {
+              if (groupConfig.groupPolicy === "mention" && mentionDecision.shouldSkip && !(replyToSelfAllowed && wasReplyToSelf)) {
                 log?.info?.("telegram-userbot skipping group message without mention", {
                   accountId,
                   chatId: normalized.chatId,
@@ -468,7 +518,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 From: conversationRouteTarget,
                 To: conversationRouteTarget,
                 SessionKey: route.sessionKey,
-                AccountId: route.accountId ?? accountId,
+                AccountId: routeAccountId,
                 ChatType: "group",
                 ConversationLabel: senderLabel,
                 SenderId: senderId,
@@ -476,7 +526,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 SenderName: normalized.senderDisplay,
                 GroupId: normalized.chatId,
                 GroupSubject: normalized.chatId,
-                WasMentioned: mentionDecision.effectiveWasMentioned || wasReplyToSelf,
+                WasMentioned: mentionDecision.effectiveWasMentioned || (replyToSelfAllowed && wasReplyToSelf),
                 WasReplyToSelf: wasReplyToSelf,
                 Provider: "telegram",
                 Surface: "telegram-userbot",
@@ -495,7 +545,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 senderId,
               });
               rememberGroupReplyAddress({
-                accountId: route.accountId ?? accountId,
+                accountId: routeAccountId,
                 chatId: normalized.chatId,
                 replyToId: normalized.messageId,
                 address: groupReplyAddress,
@@ -521,7 +571,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                     sessionKey: route.sessionKey,
                     channel: CHANNEL_ID,
                     to: conversationRouteTarget,
-                    accountId: route.accountId ?? accountId,
+                    accountId: routeAccountId,
                   },
                   onRecordError: (err) => {
                     log?.info?.("telegram-userbot failed to update group last route", {
@@ -536,17 +586,17 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                 const dispatchBase = buildInboundReplyDispatchBase({
                   cfg,
                   channel: "telegram-userbot",
-                  accountId: route.accountId ?? accountId,
+                  accountId: routeAccountId,
                   route,
                   storePath,
                   ctxPayload,
-                  core: { channel: channelRuntime },
+                  core: { channel: channelRuntime } as any,
                 });
                 const { onModelSelected, ...replyPipeline } = createChannelReplyPipeline({
                   cfg,
                   agentId: route.agentId,
                   channel: "telegram-userbot",
-                  accountId: route.accountId ?? accountId,
+                  accountId: routeAccountId,
                 });
                 const dispatchResult = await dispatchBase.dispatchReplyWithBufferedBlockDispatcher({
                   ctx: ctxPayload,
@@ -559,7 +609,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                         accountId,
                         chatId: normalized.chatId,
                         messageId: normalized.messageId,
-                        payloadText: outboundText,
+                        payloadTextLength: outboundText.length,
                         payloadReplyToId: payload.replyToId ?? null,
                       });
                       if (!outboundText) {
@@ -568,7 +618,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
 
                       const replyToMessageId = payload.replyToId ? Number(payload.replyToId) : Number(normalized.messageId);
                       const rememberedAddress = consumeGroupReplyAddress({
-                        accountId: route.accountId ?? accountId,
+                        accountId: routeAccountId,
                         chatId: normalized.chatId,
                         replyToId: payload.replyToId ?? normalized.messageId,
                       });
@@ -616,7 +666,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
                       chatId: normalized.chatId,
                       messageId: normalized.messageId,
                       routeSessionKey: route.sessionKey,
-                      fallbackText,
+                      fallbackTextLength: fallbackText.length,
                     });
 
                     await sendTextToConversation({
@@ -823,6 +873,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
 
           await runtime.stop();
           runtimes.delete(accountId);
+          accountSecurity.delete(accountId);
 
           console.info("telegram-userbot disconnected", {
             accountId,
@@ -885,6 +936,10 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
 
           const inferredKind = inferOutboundTargetKind(params.input, params.preferredKind);
           const accountId = resolveRuntimeAccountId(params.cfg, params.accountId);
+          assertOutboundTargetAllowed({
+            policy: resolveAccountOutboundPolicy(params.cfg, accountId),
+            target,
+          });
           const gram = accountId ? runtimes.get(accountId) : undefined;
           const resolved = gram ? await gram.resolvePeer(target, { kind: inferredKind }).catch(() => undefined) : undefined;
           const kind = resolved?.chatType === "group" || inferredKind === "group"
@@ -922,6 +977,10 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
         }
 
         const accountId = resolveRuntimeAccountId(params.cfg, params.accountId);
+        assertOutboundTargetAllowed({
+          policy: resolveAccountOutboundPolicy(params.cfg, accountId),
+          target,
+        });
         const gram = accountId ? runtimes.get(accountId) : undefined;
         const resolved = gram ? await gram.resolvePeer(target, { kind: targetKind }).catch(() => undefined) : undefined;
         const peerId = resolved?.chatId ?? target;
@@ -1017,6 +1076,11 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
           throw new Error("telegram-userbot: no configured account found");
         }
         const currentChannelId = toolContext?.currentChannelId?.trim() ?? "";
+        assertOutboundTargetAllowed({
+          policy: resolveAccountOutboundPolicy(cfg, resolvedAccountId),
+          target: to,
+          currentChannelId,
+        });
         const currentMessageId = toolContext?.currentMessageId;
         const currentChannelTarget = currentChannelId ? normalizeOutboundTarget(currentChannelId) : "";
         const sendingToCurrentGroup = Boolean(
@@ -1147,7 +1211,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
           rawTo: ctx.to,
           replyToId: ctx.replyToId ?? null,
           threadId: ctx.threadId ?? null,
-          text: ctx.text,
+          textLength: ctx.text.length,
         });
         const gram = runtimes.get(ctx.accountId);
         if (!gram) {
@@ -1161,6 +1225,10 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
         });
         const targetKind = inferOutboundTargetKind(ctx.to);
         const target = normalizeOutboundTarget(ctx.to);
+        assertOutboundTargetAllowed({
+          policy: resolveAccountOutboundPolicy(undefined, ctx.accountId),
+          target,
+        });
         const messageThreadId = parseOptionalThreadId(ctx.threadId);
 
         const sent = await gram.sendText({
@@ -1205,21 +1273,32 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
           to: ctx.to,
           replyToId: ctx.replyToId ?? null,
           threadId: ctx.threadId ?? null,
-          filePath: ctx.filePath ?? null,
-          mediaUrl: ctx.mediaUrl ?? null,
+          hasFilePath: Boolean(ctx.filePath),
+          hasMediaUrl: Boolean(ctx.mediaUrl),
           hasText: Boolean(ctx.text),
           hasCaption: Boolean(ctx.caption),
         });
 
-        const file = ctx.filePath ?? ctx.mediaUrl;
+        const file = [ ctx.filePath, ctx.mediaUrl ]
+          .map((value) => typeof value === "string" ? value.trim() : "")
+          .find(Boolean);
         if (!file) {
           throw new Error("telegram-userbot: sendMedia requires filePath or mediaUrl");
         }
+        const target = normalizeOutboundTarget(ctx.to);
+        assertOutboundTargetAllowed({
+          policy: resolveAccountOutboundPolicy(undefined, ctx.accountId),
+          target,
+        });
+        const safeFile = validateMediaFile({
+          media: resolveAccountMediaPolicy(ctx.accountId),
+          file,
+        });
         const messageThreadId = parseOptionalThreadId(ctx.threadId);
 
         const sent = await gram.sendMedia({
-          target: ctx.to,
-          file,
+          target,
+          file: safeFile,
           caption: ctx.caption ?? ctx.text,
           replyToMessageId: resolveReplyToMessageIdForTarget(ctx.to, ctx.replyToId),
           messageThreadId,
@@ -1227,7 +1306,7 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
 
         actionLog.info("telegram-userbot outbound sendMedia completed", {
           accountId: ctx.accountId,
-          to: ctx.to,
+          to: target,
           replyToId: ctx.replyToId ?? null,
           sentMessageId: String((sent as any)?.id ?? ""),
         });

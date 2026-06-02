@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import JSON5 from "json5";
@@ -8,6 +9,11 @@ type TelegramAuthResult = {
   apiId: number;
   apiHash: string;
   sessionString: string;
+};
+
+type AccountEnvNames = {
+  apiHashEnv: string;
+  sessionStringEnv: string;
 };
 
 type TextFormat = {
@@ -46,26 +52,49 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function buildAccountPayload(auth: TelegramAuthResult): Record<string, unknown> {
+function normalizeEnvAccountId(accountId: string): string {
+  const normalized = accountId
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  const hash = createHash("sha256").update(accountId).digest("hex").slice(0, 8).toUpperCase();
+
+  return `${normalized || "DEFAULT"}_${hash}`;
+}
+
+export function buildAccountEnvNames(accountId: string): AccountEnvNames {
+  const suffix = normalizeEnvAccountId(accountId);
   return {
-    enabled: true,
-    apiId: auth.apiId,
-    apiHash: auth.apiHash,
-    sessionString: auth.sessionString,
+    apiHashEnv: `TELEGRAM_USERBOT_${suffix}_API_HASH`,
+    sessionStringEnv: `TELEGRAM_USERBOT_${suffix}_SESSION`,
   };
 }
 
-function buildAccountConfigFragment(auth: TelegramAuthResult): Record<string, unknown> {
+function buildAccountPayload(accountId: string, auth: TelegramAuthResult): Record<string, unknown> {
+  const envNames = buildAccountEnvNames(accountId);
+
   return {
-    ...buildAccountPayload(auth),
-    allowFrom: [ "*" ],
-    groups: {
-      "*": {
-        enabled: true,
-        groupPolicy: "mention",
-        allowFrom: [ "*" ],
-      },
+    enabled: true,
+    apiId: auth.apiId,
+    apiHashEnv: envNames.apiHashEnv,
+    sessionStringEnv: envNames.sessionStringEnv,
+  };
+}
+
+function buildAccountConfigFragment(accountId: string, auth: TelegramAuthResult): Record<string, unknown> {
+  return {
+    ...buildAccountPayload(accountId, auth),
+    allowFrom: [],
+    outbound: {
+      allowCurrentChat: true,
+      allowTo: [],
     },
+    media: {
+      enabled: false,
+      allowedRoots: [],
+    },
+    groups: {},
   };
 }
 
@@ -74,6 +103,11 @@ function applyAuthToConfig(config: OpenClawConfig, accountId: string, auth: Tele
   const channelConfig = channels[ CHANNEL_ID ] && typeof channels[ CHANNEL_ID ] === "object" ? channels[ CHANNEL_ID ] : {};
   const accounts = channelConfig.accounts && typeof channelConfig.accounts === "object" ? channelConfig.accounts : {};
   const existingAccount = accounts[ accountId ] && typeof accounts[ accountId ] === "object" ? accounts[ accountId ] : {};
+  const {
+    apiHash: _apiHash,
+    sessionString: _sessionString,
+    ...existingAccountWithoutPlaintext
+  } = existingAccount as Record<string, unknown>;
 
   return {
     ...config,
@@ -84,17 +118,19 @@ function applyAuthToConfig(config: OpenClawConfig, accountId: string, auth: Tele
         accounts: {
           ...accounts,
           [ accountId ]: {
-            ...existingAccount,
-            ...buildAccountPayload(auth),
+            ...existingAccountWithoutPlaintext,
+            ...buildAccountPayload(accountId, auth),
             enabled: existingAccount.enabled ?? true,
-            allowFrom: existingAccount.allowFrom ?? [ "*" ],
-            groups: existingAccount.groups ?? {
-              "*": {
-                enabled: true,
-                groupPolicy: "mention",
-                allowFrom: [ "*" ],
-              },
+            allowFrom: existingAccount.allowFrom ?? [],
+            outbound: existingAccount.outbound ?? {
+              allowCurrentChat: true,
+              allowTo: [],
             },
+            media: existingAccount.media ?? {
+              enabled: false,
+              allowedRoots: [],
+            },
+            groups: existingAccount.groups ?? {},
           },
         },
       },

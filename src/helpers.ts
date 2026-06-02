@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   stripChannelTargetPrefix,
@@ -10,6 +10,7 @@ import {
   matchesMentionWithExplicit,
 } from "openclaw/plugin-sdk/channel-inbound";
 import { CHANNEL_ID } from './constants';
+import type { MediaConfig, OutboundConfig } from "./types";
 
 function resolveConfiguredAccountId(cfg: any, preferred?: string | null): string | undefined {
   if (preferred?.trim()) {
@@ -208,15 +209,15 @@ function resolveAllowFrom(value: unknown): string[] {
 
   if (typeof value === "string" || typeof value === "number") {
     const entry = String(value).trim();
-    return entry ? [ entry ] : [ "*" ];
+    return entry ? [ entry ] : [];
   }
 
   if (!Array.isArray(value)) {
-    return [ "*" ];
+    return [];
   }
 
   const entries = value.map((entry) => String(entry).trim()).filter(Boolean);
-  return entries.length > 0 ? entries : [ "*" ];
+  return entries;
 }
 
 function resolveGroupPolicy(value: unknown): "open" | "mention" {
@@ -227,6 +228,7 @@ function resolveGroups(value: unknown): Record<string, {
   enabled: boolean;
   groupPolicy: "open" | "mention";
   allowFrom: string[];
+  allowReplyToSelf: boolean;
 }> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -244,6 +246,7 @@ function resolveGroups(value: unknown): Record<string, {
         enabled: groupConfig.enabled !== false,
         groupPolicy: resolveGroupPolicy(groupConfig.groupPolicy),
         allowFrom: resolveAllowFrom(groupConfig.allowFrom),
+        allowReplyToSelf: groupConfig.allowReplyToSelf === true,
       },
     ];
   }).filter(([ groupId ]) => Boolean(groupId)));
@@ -253,12 +256,173 @@ function resolveGroupConfig(groups: Record<string, {
   enabled: boolean;
   groupPolicy: "open" | "mention";
   allowFrom: string[];
+  allowReplyToSelf: boolean;
 }>, chatId: string): {
   enabled: boolean;
   groupPolicy: "open" | "mention";
   allowFrom: string[];
+  allowReplyToSelf: boolean;
 } | undefined {
   return groups[ chatId ] ?? groups[ "*" ];
+}
+
+function readEnvSecret(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const envName = value.trim();
+  return envName ? process.env[envName]?.trim() ?? "" : "";
+}
+
+function resolveSecretString(value: unknown, envNameValue?: unknown): string {
+  const fromExplicitEnv = readEnvSecret(envNameValue);
+  if (fromExplicitEnv) {
+    return fromExplicitEnv;
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const envName = (value as Record<string, unknown>).env ?? (value as Record<string, unknown>).envVar;
+    const fromInlineEnv = readEnvSecret(envName);
+    if (fromInlineEnv) {
+      return fromInlineEnv;
+    }
+  }
+
+  return "";
+}
+
+function resolveOutboundPolicy(value: unknown): OutboundConfig {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+  return {
+    allowCurrentChat: source.allowCurrentChat !== false,
+    allowTo: resolveAllowFrom(source.allowTo),
+  };
+}
+
+function normalizeOutboundAllowEntry(value: unknown): string {
+  const normalized = normalizeOutboundTarget(String(value ?? "")).trim().toLowerCase();
+  return normalized.startsWith("@") ? normalized.slice(1) : normalized;
+}
+
+function isOutboundTargetAllowed(input: {
+  policy: OutboundConfig;
+  target: string;
+  currentChannelId?: string | null;
+}): boolean {
+  const targetKey = normalizeOutboundAllowEntry(input.target);
+  if (!targetKey) {
+    return false;
+  }
+
+  if (input.policy.allowCurrentChat && input.currentChannelId) {
+    const currentKey = normalizeOutboundAllowEntry(input.currentChannelId);
+    if (currentKey && currentKey === targetKey) {
+      return true;
+    }
+  }
+
+  if (input.policy.allowTo.includes("*")) {
+    return true;
+  }
+
+  return input.policy.allowTo
+    .map(normalizeOutboundAllowEntry)
+    .filter(Boolean)
+    .includes(targetKey);
+}
+
+function assertOutboundTargetAllowed(input: {
+  policy: OutboundConfig;
+  target: string;
+  currentChannelId?: string | null;
+}): void {
+  if (!isOutboundTargetAllowed(input)) {
+    throw new Error("telegram-userbot: outbound target is not allowed by outbound.allowTo");
+  }
+}
+
+function resolveMediaPolicy(value: unknown): MediaConfig {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+  const maxBytes = typeof source.maxBytes === "number" && Number.isFinite(source.maxBytes) && source.maxBytes > 0
+    ? Math.trunc(source.maxBytes)
+    : undefined;
+
+  return {
+    enabled: source.enabled === true,
+    allowedRoots: resolveAllowFrom(source.allowedRoots),
+    allowRemoteUrls: source.allowRemoteUrls === true,
+    maxBytes,
+  };
+}
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function assertPathInsideRoots(input: {
+  filePath: string;
+  allowedRoots: string[];
+}): string {
+  if (input.allowedRoots.length === 0) {
+    throw new Error("telegram-userbot: media.allowedRoots must include at least one directory");
+  }
+
+  const candidate = path.resolve(input.filePath);
+  if (!existsSync(candidate)) {
+    throw new Error("telegram-userbot: media file does not exist");
+  }
+
+  const realFile = realpathSync(candidate);
+  const allowedRoots = input.allowedRoots.map((root) => realpathSync(path.resolve(root)));
+  const isAllowed = allowedRoots.some((root) => realFile === root || realFile.startsWith(`${root}${path.sep}`));
+  if (!isAllowed) {
+    throw new Error("telegram-userbot: media file is outside configured media.allowedRoots");
+  }
+
+  return realFile;
+}
+
+function validateMediaFile(input: {
+  media: MediaConfig;
+  file: string;
+}): string {
+  if (!input.media.enabled) {
+    throw new Error("telegram-userbot: media sending is disabled by media.enabled");
+  }
+
+  if (isHttpUrl(input.file)) {
+    if (!input.media.allowRemoteUrls) {
+      throw new Error("telegram-userbot: remote media URLs are disabled by media.allowRemoteUrls");
+    }
+
+    return input.file;
+  }
+
+  const realFile = assertPathInsideRoots({
+    filePath: input.file,
+    allowedRoots: input.media.allowedRoots,
+  });
+  const stats = statSync(realFile);
+  if (!stats.isFile()) {
+    throw new Error("telegram-userbot: media path must point to a regular file");
+  }
+
+  if (input.media.maxBytes && stats.size > input.media.maxBytes) {
+    throw new Error("telegram-userbot: media file exceeds media.maxBytes");
+  }
+
+  return realFile;
 }
 
 function resolveActiveUsername(source: any): string | undefined {
@@ -580,6 +744,11 @@ export {
   resolveGroupPolicy,
   resolveGroups,
   resolveGroupConfig,
+  resolveSecretString,
+  resolveOutboundPolicy,
+  assertOutboundTargetAllowed,
+  resolveMediaPolicy,
+  validateMediaFile,
   resolveActiveUsername,
   normalizeAllowEntry,
   isSenderAllowed,

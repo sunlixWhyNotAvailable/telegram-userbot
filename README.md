@@ -1,23 +1,23 @@
 # Telegram Userbot
 
-Telegram Userbot plugin for [OpenClaw](https://github.com/openclaw/openclaw) — connects as a regular Telegram user account (not a bot) via MTProto using [GramJS](https://github.com/gram-js/gramjs)
+Telegram Userbot plugin for [OpenClaw](https://github.com/openclaw/openclaw). It connects a regular Telegram user account, not a bot account, through MTProto using [GramJS](https://github.com/gram-js/gramjs).
 
-> **WARNING**: Using a user account for automated messaging may violate Telegram's Terms of Service. Use a dedicated secondary account. Your account could be banned or restricted.
-
+> **WARNING:** Automating a user account can violate Telegram's Terms of Service. Use a dedicated secondary account. The account can be banned, restricted, or rate limited.
 
 ## Features
 
-- **MTProto Client API** — operates as a user account, not a bot
-- **DM & Group support** — private chats, groups, supergroups, forum topics
-- **Forum topic routing** — correctly routes replies to the right forum topic thread
-- **@Mention detection** — respond only when mentioned in groups (text, caption, and ID-based mentions)
-- **Read receipts** — mark messages as read
-- **User allowlist** — control which user has access to send messages for direct
-- **Chat allowlist** — control which chats the assistant can access
-- **Multi-account** — run multiple Telegram accounts simultaneously
-- **Per-group settings** — different behavior for different groups
-- **Slash commands** — [slash commands](https://docs.openclaw.ai/tools/slash-commands) are available in DM to the connected account (`/status`, `/reset`, `/new`, etc.)
-
+- MTProto Client API - operates as a user account, not a bot.
+- Phone-code and QR-code authorization helper.
+- DM and group support - private chats, groups, supergroups, and forum topics.
+- Forum topic routing - routes replies to the right forum topic thread.
+- Mention detection - respond in groups only on mention by default.
+- Read receipts - mark handled allowed messages as read.
+- Closed-by-default inbound allowlists - direct and group messages are ignored until senders are explicitly allowed.
+- Closed-by-default outbound policy - explicit sends are limited to the current chat or configured destinations.
+- Media guardrails - file sends are disabled by default and can be restricted to configured directories.
+- Multi-account - run multiple Telegram accounts simultaneously.
+- Per-group settings - different behavior for different groups.
+- Slash commands - OpenClaw slash commands are available in allowed DMs to the connected account.
 
 ## Requirements
 
@@ -35,85 +35,102 @@ openclaw plugins install clawhub:telegram-userbot
 
 ### 1. Get Telegram API credentials
 
-- Go to https://my.telegram.org
-- Log in with your phone number
-- Go to "API development tools"
-- Create a new application
-- Copy the `api_id` and `api_hash`
+1. Go to https://my.telegram.org.
+2. Log in with the phone number of the dedicated Telegram account.
+3. Open "API development tools".
+4. Create a new application.
+5. Copy the `api_id` and `api_hash`.
 
+### 2. Authorize the Telegram account
 
-### 2. Log in to your telegram account
-
-Log in to your telegram account via cli using API credentials and phone number
+Run the authorization helper:
 
 ```bash
 openclaw telegram-userbot --auth
 ```
 
-If the custom OpenClaw cli command hangs, run the standalone authorization script directly:
+If the custom OpenClaw CLI command hangs in your environment, run the standalone helper directly:
 
 ```bash
 node ~/.openclaw/extensions/telegram-userbot/dist/telegram-userbot-cli.js --auth
 ```
 
-> **NOTES**: Starting with OpenClaw `2026.5.12`, hangs have been observed in some environments when running custom plugin cli commands through `openclaw <plugin command> ...`. If that happens, use the standalone command above. It runs the same authorization flow, but bypasses the custom cli entrypoint inside OpenClaw.
+The helper asks for `apiId` and `apiHash`, then lets you choose one of two authorization methods:
 
-Follow the steps in the console
+1. Telegram message / login code.
+2. QR code.
+
+The phone-code method asks for the phone number, login code, and optional two-factor password. After authorization it prints environment variable assignments for the selected account:
 
 ```bash
 Starting Telegram Userbot authorization...
 Please enter your apiId: 12345678
 Please enter your apiHash: c4b9c0fde16342afe52907847df27596
-[2026-05-10T16:01:24.570] [INFO] - [Running gramJS version 2.26.21]
-[2026-05-10T16:01:24.578] [INFO] - [Connecting to x.x.x.x:80/TCPFull...]
-[2026-05-10T16:01:25.804] [INFO] - [Connection to x.x.x.x:80/TCPFull complete!]
-[2026-05-10T16:01:25.808] [INFO] - [Using LAYER 198 for initial connect]
+
+Authorization methods:
+  1. Telegram message / login code
+  2. QR code
+Choose authorization method [1]: 1
 Please enter your number: +1 XXX XXX XXXX
 Please enter the code you received: 12345
-[2026-05-10T16:01:56.384] [INFO] - [Signed in successfully as <USER>]
-[2026-05-10T16:01:56.388] [WARN] - [Disconnecting...]
-[2026-05-10T16:01:56.390] [INFO] - [Disconnecting from x.x.x.x:80/TCPFull...]
 Telegram authorization completed successfully.
+Enter account id for config [default]:
 
-Session string:
-1BAAOMTQ5LjE1NC4xNjcuOTEAUQZ1aeNwM6O5lSD+kX/irkoUFMj+nUy5hRhpVqbkuOhEP+JOT4FEobUVnUKPnpKPxXdwQ9e
-js+tWQTto86Heab4XSfyOoWK5WDA/dMhFYBuFxms/FF946HerCM+i5nh0gu//YGmIEntw7gY8JQQNYuvLB5SGdsDpa50LcJ5fK
-686qqUsnlqmRTONdVG3EOdnV8RbTFTHg5BWLztfD5uLt1lIr/bG+BWCPCLAaA85yPL8SgGRLtX4QYXrnaEVmKui8SWq5J/
-Ol86oZGlrMcnj5DRQ/VeYY7yGcESwnoTSx44irCyk9GelCavzs/dfN6sAYfoZb6cN/L9jxEYXkkCQdig=
+Store these values in the OpenClaw gateway environment or secret store.
+They are not written to openclaw.json by the automatic config updater.
+
+TELEGRAM_USERBOT_DEFAULT_37A8EEC1_API_HASH=c4b9c0fde16342afe52907847df27596
+TELEGRAM_USERBOT_DEFAULT_37A8EEC1_SESSION=1BAA...
 ```
 
-Since the plugin supports connecting multiple accounts, at this step the cli will ask you for the account ID, if you do not enter anything, the [default] key will be applied. You can also enter your own value.
+The QR method prints a terminal QR code. The fallback `tg://login?token=...` URL is hidden by default because it is sensitive while valid:
 
 ```bash
-Enter account id for config [default]: [2026-05-10T16:01:56.402] [INFO] - [connection closed]
-[2026-05-10T16:02:02.096] [WARN] - [Disconnecting...]
-[2026-05-10T16:02:02.103] [INFO] - [Disconnecting from x.x.x.x:80/TCPFull...]
+Starting Telegram Userbot authorization...
+Please enter your apiId: 12345678
+Please enter your apiHash: c4b9c0fde16342afe52907847df27596
+
+Authorization methods:
+  1. Telegram message / login code
+  2. QR code
+Choose authorization method [1]: 2
+
+Scan this QR code from Telegram: Settings > Devices > Link Desktop Device.
+QR token expires at: 2026-05-29T09:56:00.000Z
+<terminal QR code>
+Fallback login URL hidden. Set TELEGRAM_USERBOT_AUTH_PRINT_QR_URL=1 before running --auth to print it if your terminal cannot render QR codes.
+Waiting for QR scan...
+Telegram authorization completed successfully.
 ```
 
-In the next step, you must confirm or reject the automatic update of the openclaw.json configuration file. If you reject it or receive an error updating the file, the cli will display an openclaw.json configuration fragment that you must add manually.
+QR authorization can still ask for the Telegram two-factor password if the account has 2FA enabled. Scan the QR code only from the intended dedicated Telegram account. Do not share terminal QR screenshots while the token is valid. Print the fallback URL only in a private terminal by setting `TELEGRAM_USERBOT_AUTH_PRINT_QR_URL=1` before running `--auth`.
 
-The automatic config update keeps the rest of `openclaw.json` intact and only updates the `channels.telegram-userbot` section for the selected account. A timestamped backup of the config file is created before any write attempt.
+After either authorization method, the helper asks for the account ID and prints the API hash/session environment variable assignments.
 
-Update **yes**
+Store these values in the OpenClaw gateway environment, systemd environment file, or secret store before restarting the gateway. The MTProto session string is equivalent to access to the Telegram account.
+
+Generated env var names include the sanitized account ID and a short hash of the original account ID. The hash prevents collisions between IDs such as `prod-admin` and `prod_admin`.
+
+### 3. Add config
+
+The automatic config updater writes only env references and policy defaults. It does not write `apiHash` or `sessionString` plaintext values. For existing accounts, it replaces plaintext `apiHash` and `sessionString` with env references while preserving `enabled`, `allowFrom`, `outbound`, `media`, and `groups`.
+
+The generated account is closed by default. Edit `allowFrom`, `outbound.allowTo`, and `groups` before expecting replies or explicit cross-chat sends.
+
 ```bash
 Update OpenClaw config automatically? [y/N]: y
-
-Config overwrite: /root/.openclaw/openclaw.json (sha256 97c4b55e61901aa71ff40898b5ebfbadd0f8fb9cd0145f3a08a5e5163783258a -> 6447683c687ceeb0dba09b2ca5187967e979ad2663d901977c608b6a09c9c432, backup=/root/.openclaw/openclaw.json.bak)
 
 OpenClaw config updated: /root/.openclaw/openclaw.json
 Configured account id: default
 Config backup created: /root/.openclaw/openclaw.json.bak-20260512-084914-telegram-userbot-auth
 
 After applying config changes, restart OpenClaw:
-
 openclaw gateway restart
 ```
 
-Update **no**
-```bash
-Update OpenClaw config automatically? [y/N]: n
+If you choose manual config, add a fragment like this:
 
-JSON fragment for manual insertion:
+```json
 {
   "channels": {
     "telegram-userbot": {
@@ -121,91 +138,114 @@ JSON fragment for manual insertion:
         "default": {
           "enabled": true,
           "apiId": 12345678,
-          "apiHash": "apiHash",
-          "sessionString": "sessionString",
+          "apiHashEnv": "TELEGRAM_USERBOT_DEFAULT_37A8EEC1_API_HASH",
+          "sessionStringEnv": "TELEGRAM_USERBOT_DEFAULT_37A8EEC1_SESSION",
           "allowFrom": [
-            "*"
+            "123456789"
           ],
-          "groups": {
-            "*": {
-              "enabled": true,
-              "groupPolicy": "mention",
-              "allowFrom": [
-                "*"
-              ]
-            }
-          }
+          "outbound": {
+            "allowCurrentChat": true,
+            "allowTo": [
+              "123456789"
+            ]
+          },
+          "media": {
+            "enabled": false,
+            "allowedRoots": []
+          },
+          "groups": {}
         }
       }
     }
   }
 }
-
-After applying config changes, restart OpenClaw:
-
-openclaw gateway restart
 ```
 
-### 3. Restart OpenClaw gateway
+### 4. Restart OpenClaw gateway
 
 ```bash
 openclaw gateway restart
 ```
-
 
 ## Configuration Reference
 
-### JSON Reference
+### Account fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Enables or disables the account. |
+| `apiId` | positive integer or numeric string | required | Telegram API ID. |
+| `apiHashEnv` | string | optional | Environment variable that contains the Telegram API hash. Preferred over plaintext. |
+| `sessionStringEnv` | string | optional | Environment variable that contains the GramJS StringSession. Preferred over plaintext. |
+| `apiHash` | string or `{ "env": "NAME" }` | optional | Backward-compatible API hash value or inline env reference. Plaintext is discouraged. |
+| `sessionString` | string or `{ "env": "NAME" }` | optional | Backward-compatible StringSession value or inline env reference. Plaintext is discouraged. |
+| `allowFrom` | string[] or number[] | `[]` | Allowed sender IDs/usernames for direct messages. Empty means nobody is allowed. Use `"*"` only for trusted test setups. Strings are recommended for Telegram IDs. |
+| `outbound` | object | see below | Controls explicit outbound sends from the message tool/outbound API. |
+| `media` | object | see below | Controls outbound media sends. |
+| `groups` | object | `{}` | Allowed groups map keyed by explicit group id or `"*"`. Empty means no groups are enabled. |
+
+Each account must provide either `apiHash` or `apiHashEnv`, and either `sessionString` or `sessionStringEnv`.
+
+Channel-level `allowFrom` and `groups` remain accepted for older configs, but account-scoped fields are the supported configuration surface. Account settings are not merged with channel-level policy fields.
+
+### Outbound fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `allowCurrentChat` | boolean | `true` | Allows the message tool to reply to the current Telegram chat without adding that chat to `allowTo`. |
+| `allowTo` | string[] or number[] | `[]` | Explicit destinations the agent may send to. Supports numeric Telegram IDs, usernames, and `"*"`. Empty blocks explicit cross-chat sends. Strings are recommended for Telegram IDs. |
+
+Inbound auto-replies to an allowed message are sent back to that same conversation. `outbound.allowTo` controls explicit sends, such as tool calls with `to` or `target`.
+
+### Media fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Enables outbound media sends. |
+| `allowedRoots` | string[] | `[]` | Directories from which local media files may be sent. Paths are checked with `realpath` to prevent symlink traversal. |
+| `allowRemoteUrls` | boolean | `false` | Allows HTTP/HTTPS media URLs. |
+| `maxBytes` | number | unset | Optional maximum local file size in bytes. |
+
+For agent workflows, prefer a dedicated output directory such as `/agent-outbox`:
+
+```json
+"media": {
+  "enabled": true,
+  "allowedRoots": [
+    "/agent-outbox"
+  ],
+  "maxBytes": 25000000
+}
+```
+
+### Group fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Enables or disables replies in the group. |
+| `groupPolicy` | `"open"` or `"mention"` | `"mention"` | `open` replies to any allowed group message. `mention` requires an explicit mention by default. |
+| `allowReplyToSelf` | boolean | `false` | Lets replies to the userbot's own previous message count as mention-equivalent. |
+| `allowFrom` | string[] or number[] | `[]` | Allowed sender IDs/usernames inside that group. Empty means nobody is allowed. Strings are recommended for Telegram IDs. |
+
+Example group config:
 
 ```json
 {
-  "channels": {
-    "telegram-userbot": {
-      "accounts": {
-        "default": {
-          "enabled": true,
-          "apiId": 12345678,
-          "apiHash": "apiHash",
-          "sessionString": "sessionString",
-          "allowFrom": [
-            "*"
-          ],
-          "groups": {
-            "*": {
-              "enabled": true,
-              "groupPolicy": "mention",
-              "allowFrom": [
-                "*"
-              ]
-            }
-          }
-        }
-      }
+  "groups": {
+    "-1001234567899": {
+      "enabled": true,
+      "groupPolicy": "mention",
+      "allowReplyToSelf": false,
+      "allowFrom": [
+        "123456789",
+        "@trusted_user"
+      ]
     }
   }
 }
 ```
 
-### Mention fields 
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `apiId` | number | required | Telegram API ID |
-| `apiHash` | string | required | Telegram API hash |
-| `sessionString` | string | `""` | Authenticated StringSession |
-| `allowFrom` | string[] | `["*"]` | Allowed sender IDs/usernames for direct messages only |
-| `groups` | object | `{}` | Allowed groups map keyed by explicit group id or `*` |
-
-Group config fields:
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Enables or disables replies in the group |
-| `groupPolicy` | `"open"` \| `"mention"` | `"mention"` | `open` replies to any group message, `mention` only on @mention or reply-to-self |
-| `allowFrom` | string[] | `["*"]` | Allowed sender IDs/usernames inside that group |
-
-
-### Configuration variant for example
+## Complete Example
 
 ```json
 {
@@ -215,32 +255,32 @@ Group config fields:
         "default": {
           "enabled": true,
           "apiId": 12345678,
-          "apiHash": "apiHash",
-          "sessionString": "sessionString",
+          "apiHashEnv": "TELEGRAM_USERBOT_DEFAULT_37A8EEC1_API_HASH",
+          "sessionStringEnv": "TELEGRAM_USERBOT_DEFAULT_37A8EEC1_SESSION",
           "allowFrom": [
-            "@nickname1",
-            "@nickname2"
+            "123456789"
           ],
+          "outbound": {
+            "allowCurrentChat": true,
+            "allowTo": [
+              "123456789",
+              "@trusted_user"
+            ]
+          },
+          "media": {
+            "enabled": true,
+            "allowedRoots": [
+              "/agent-outbox"
+            ],
+            "maxBytes": 25000000
+          },
           "groups": {
             "-1001234567899": {
               "enabled": true,
               "groupPolicy": "mention",
+              "allowReplyToSelf": false,
               "allowFrom": [
-                "@nickname1"
-              ]
-            },
-            "-1009876543219": {
-              "enabled": true,
-              "groupPolicy": "mention",
-              "allowFrom": [
-                "*"
-              ]
-            },
-            "-1001234567891": {
-              "enabled": true,
-              "groupPolicy": "open",
-              "allowFrom": [
-                "*"
+                "123456789"
               ]
             }
           }
@@ -251,42 +291,24 @@ Group config fields:
 }
 ```
 
-
-## Slash commands
-
-OpenClaw provides a robust set of native commands. Just like in a regular Telegram bot, slash commands are also available for a user Telegram account connected via the Telegram userbot plugin. Send the slash command in DM to the connected account.
-
-Use commands like `/status`, `/reset`, `/new` and others.
-
-You can read more about slash commands in the [OpenClaw official documentation](https://docs.openclaw.ai/tools/slash-commands).
-
-
-
 ## Multi-Account
 
-The plugin also supports adding multiple accounts. You can run the cli command many times
+Run the authorization helper once per account:
 
 ```bash
 openclaw telegram-userbot --auth
 ```
 
-
-If the custom cli command hangs on your OpenClaw version, use the standalone command instead:
-
-```bash
-node ~/.openclaw/extensions/telegram-userbot/dist/telegram-userbot-cli.js --auth
-```
-
-And in the account ID step, enter a value other than the first [default] or your previously entered one.
-account ID must be unique
+Use a unique account ID for each account. The helper derives separate env var names from the account ID. If you choose QR authorization, scan the QR code from the Telegram account that should be bound to that account ID.
 
 ```bash
-Enter account id for config [default]: [2026-05-10T16:01:56.402] [INFO] - [connection closed]
-[2026-05-10T16:02:02.096] [WARN] - [Disconnecting...]
-[2026-05-10T16:02:02.103] [INFO] - [Disconnecting from x.x.x.x:80/TCPFull...]
+Enter account id for config [default]: second
 
-second
+TELEGRAM_USERBOT_SECOND_16367AAC_API_HASH=...
+TELEGRAM_USERBOT_SECOND_16367AAC_SESSION=...
 ```
+
+Example:
 
 ```json
 {
@@ -296,38 +318,42 @@ second
         "default": {
           "enabled": true,
           "apiId": 12345678,
-          "apiHash": "apiHash",
-          "sessionString": "sessionString",
+          "apiHashEnv": "TELEGRAM_USERBOT_DEFAULT_37A8EEC1_API_HASH",
+          "sessionStringEnv": "TELEGRAM_USERBOT_DEFAULT_37A8EEC1_SESSION",
           "allowFrom": [
-            "*"
+            "123456789"
           ],
-          "groups": {
-            "*": {
-              "enabled": true,
-              "groupPolicy": "mention",
-              "allowFrom": [
-                "*"
-              ]
-            }
-          }
+          "outbound": {
+            "allowCurrentChat": true,
+            "allowTo": [
+              "123456789"
+            ]
+          },
+          "media": {
+            "enabled": false,
+            "allowedRoots": []
+          },
+          "groups": {}
         },
         "second": {
           "enabled": true,
           "apiId": 12345678,
-          "apiHash": "apiHash",
-          "sessionString": "sessionString",
+          "apiHashEnv": "TELEGRAM_USERBOT_SECOND_16367AAC_API_HASH",
+          "sessionStringEnv": "TELEGRAM_USERBOT_SECOND_16367AAC_SESSION",
           "allowFrom": [
-            "*"
+            "987654321"
           ],
-          "groups": {
-            "*": {
-              "enabled": true,
-              "groupPolicy": "mention",
-              "allowFrom": [
-                "*"
-              ]
-            }
-          }
+          "outbound": {
+            "allowCurrentChat": true,
+            "allowTo": [
+              "987654321"
+            ]
+          },
+          "media": {
+            "enabled": false,
+            "allowedRoots": []
+          },
+          "groups": {}
         }
       }
     }
@@ -335,113 +361,81 @@ second
 }
 ```
 
+## Slash Commands
 
-## Multi-agent routing
+OpenClaw slash commands are available in DMs from senders allowed by `allowFrom`. Use commands like `/status`, `/reset`, `/new`, and others.
 
-The Telegram Userbot channel can also be used alongside the regular Telegram channel for configuring OpenClaw multi-agent routing. In that case, accounts connected via the Telegram Userbot channel will have independent agents.
+You can read more about slash commands in the [OpenClaw official documentation](https://docs.openclaw.ai/tools/slash-commands).
 
-Here is an example of how to configure OpenClaw multi-agent routing using telegram-userbot channel in parallel with main telegram channel.
+## Multi-Agent Routing
 
-You can read more about how to set up multi-agent routing in the official [OpenClaw documentation](https://docs.openclaw.ai/concepts/multi-agent)
+The Telegram Userbot channel can be used alongside the regular Telegram channel for OpenClaw multi-agent routing. Userbot accounts can have independent agents:
 
-List model
 ```json
- "list": [
+{
+  "agents": {
+    "list": [
       {
         "id": "main",
         "default": true,
         "workspace": "/root/.openclaw/workspace"
       },
       {
-        "id": "second",
-        "workspace": "/root/.openclaw/workspace-second",
-      },
-      {
         "id": "userbot-main",
-        "workspace": "/root/.openclaw/workspace-userbot-main",
-      },
+        "workspace": "/root/.openclaw/workspace-userbot-main"
+      }
+    ],
+    "bindings": [
       {
-        "id": "userbot-second",
-        "workspace": "/root/.openclaw/workspace-userbot-second",
-      }
-    ]
-```
-
-Bindings
-```json
-"bindings": [
-    {
-      "agentId": "main",
-      "match": {
-        "channel": "telegram",
-        "accountId": "default"
-      }
-    },
-    {
-      "agentId": "second",
-      "match": {
-        "channel": "telegram",
-        "accountId": "second"
-      }
-    },
-    {
-      "agentId": "userbot-main",
-      "match": {
-        "channel": "telegram-userbot",
-        "accountId": "default"
-      }
-    },
-    {
-      "agentId": "userbot-second",
-      "match": {
-        "channel": "telegram-userbot",
-        "accountId": "second"
-      }
-    }
-  ]
-```
-
-
-> **NOTES**: Due to a known bug in the OpenClaw core, you may encounter an error in the logs: `EmbeddedAttemptSessionTakeoverError: session file changed while embedded prompt lock was released`. This error may primarily occur when communicating in group chats and not on all LLM models — only those that support tool calls. This error does not affect functionality, but it may cause a repeated request to the fallback model and excess token usage if you have one specified. To prevent this behavior, you can remove the fallback model in the openclaw.json configuration. To avoid affecting your main settings, override the model specifically for the telegram-userbot channel in the agent list when configuring multi-agent routing — do not specify a fallback model for it.
-
-```json
- "list": [
-      {
-        "id": "userbot-main",
-        "workspace": "/root/.openclaw/workspace-userbot-main",
-        "model": {
-          "primary": "<some model>"
+        "agentId": "main",
+        "match": {
+          "channel": "telegram",
+          "accountId": "default"
         }
       },
       {
-        "id": "userbot-second",
-        "workspace": "/root/.openclaw/workspace-userbot-second",
-        "model": {
-          "primary": "<some model>"
+        "agentId": "userbot-main",
+        "match": {
+          "channel": "telegram-userbot",
+          "accountId": "default"
         }
       }
     ]
+  }
+}
 ```
 
+## Security Notes
+
+- Prefer a dedicated Telegram account. Do not connect your primary personal account unless you fully understand the risk.
+- Keep `allowFrom`, `outbound.allowTo`, and `groups` explicit. Avoid `"*"` outside isolated tests.
+- Store `apiHash` and `sessionString` in environment variables or your OpenClaw secret store. Plaintext config is supported only for backward compatibility.
+- QR login tokens, terminal QR screenshots, and fallback `tg://login` URLs are sensitive while valid. The fallback URL is hidden by default; enable it only in a private terminal with `TELEGRAM_USERBOT_AUTH_PRINT_QR_URL=1`.
+- QR login does not remove credential risk. It still produces an MTProto `sessionString`, and that session string remains equivalent to account access.
+- Keep media disabled unless the agent needs it. If enabled, use a narrow `allowedRoots` directory such as `/agent-outbox`.
+- The plugin logs metadata such as chat IDs and message IDs, but it avoids logging message bodies and generated replies.
 
 ## Development
 
 ```bash
-npm install          # install dependencies
-npm run build        # run build script
+npm install
+npm run build
+npm test
 ```
 
-For local authorization testing during development, you can also run the standalone cli directly:
+For local authorization testing during development:
 
 ```bash
 npm run telegram-userbot-cli -- --auth
 ```
 
-or
+or:
 
 ```bash
 npm run telegram-userbot-cli:auth
 ```
+
+The development auth command uses the same interactive method selector as the OpenClaw CLI command.
 
 ## License
 

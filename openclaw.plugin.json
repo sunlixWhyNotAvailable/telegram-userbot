@@ -55,6 +55,10 @@
                   ],
                   "default": "mention"
                 },
+                "allowReplyToSelf": {
+                  "type": "boolean",
+                  "default": false
+                },
                 "allowFrom": {
                   "type": "array",
                   "items": {
@@ -97,9 +101,47 @@
                   ]
                 },
                 "apiHash": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "env": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "env"
+                      ]
+                    }
+                  ]
+                },
+                "apiHashEnv": {
                   "type": "string"
                 },
                 "sessionString": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "env": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "env"
+                      ]
+                    }
+                  ]
+                },
+                "sessionStringEnv": {
                   "type": "string"
                 },
                 "allowFrom": {
@@ -113,6 +155,53 @@
                         "type": "number"
                       }
                     ]
+                  }
+                },
+                "outbound": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "allowCurrentChat": {
+                      "type": "boolean",
+                      "default": true
+                    },
+                    "allowTo": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "media": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "allowedRoots": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "allowRemoteUrls": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "maxBytes": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    }
                   }
                 },
                 "groups": {
@@ -135,6 +224,10 @@
                         ],
                         "default": "mention"
                       },
+                      "allowReplyToSelf": {
+                        "type": "boolean",
+                        "default": false
+                      },
                       "allowFrom": {
                         "type": "array",
                         "items": {
@@ -153,9 +246,35 @@
                 }
               },
               "required": [
-                "apiId",
-                "apiHash",
-                "sessionString"
+                "apiId"
+              ],
+              "anyOf": [
+                {
+                  "required": [
+                    "apiHash"
+                  ]
+                },
+                {
+                  "required": [
+                    "apiHashEnv"
+                  ]
+                }
+              ],
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "sessionString"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "sessionStringEnv"
+                      ]
+                    }
+                  ]
+                }
               ]
             }
           }

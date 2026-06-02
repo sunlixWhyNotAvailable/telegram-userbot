@@ -8,6 +8,19 @@ export type GroupConfig = {
   enabled: boolean;
   groupPolicy: GroupPolicy;
   allowFrom: string[];
+  allowReplyToSelf: boolean;
+};
+
+export type OutboundConfig = {
+  allowCurrentChat: boolean;
+  allowTo: string[];
+};
+
+export type MediaConfig = {
+  enabled: boolean;
+  allowedRoots: string[];
+  allowRemoteUrls: boolean;
+  maxBytes?: number;
 };
 
 export type PluginConfig = {
@@ -16,6 +29,8 @@ export type PluginConfig = {
   sessionString: string;
   allowFrom: string[];
   groups: Record<string, GroupConfig>;
+  outbound: OutboundConfig;
+  media: MediaConfig;
   accountId?: string;
   enabled?: boolean;
 };
