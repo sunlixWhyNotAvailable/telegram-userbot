@@ -218,6 +218,11 @@ For agent workflows, prefer a dedicated output directory such as `/agent-outbox`
 }
 ```
 
+To attach media through the OpenClaw message tool, use action `send` with one of
+`filePath`, `mediaUrl`, `file`, or `attachmentPath`. Use `caption` or `text` for
+the caption. Local files are still validated against `allowedRoots` and
+`maxBytes`; remote URLs require `allowRemoteUrls`.
+
 ### Group fields
 
 | Field | Type | Default | Description |

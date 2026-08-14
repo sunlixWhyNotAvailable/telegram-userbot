@@ -75,6 +75,51 @@ function parseOptionalThreadId(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function readOptionalActionString(params: Record<string, unknown>, key: string): string | undefined {
+  const value = params[ key ];
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value).trim();
+    return text || undefined;
+  }
+
+  return undefined;
+}
+
+export function readMediaActionParam(params: Record<string, unknown>): {
+  field: "filePath" | "mediaUrl" | "file" | "attachmentPath";
+  value: string;
+} | undefined {
+  for (const field of [ "filePath", "mediaUrl", "file", "attachmentPath" ] as const) {
+    const value = params[ field ];
+    if (typeof value === "string" || typeof value === "number") {
+      const text = String(value).trim();
+      if (text) {
+        return { field, value: text };
+      }
+      continue;
+    }
+
+    if (field !== "file" || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+
+    const fileRecord = value as Record<string, unknown>;
+    for (const nestedField of [ "filePath", "path", "mediaUrl", "url" ]) {
+      const nested = fileRecord[ nestedField ];
+      if (typeof nested !== "string" && typeof nested !== "number") {
+        continue;
+      }
+
+      const text = String(nested).trim();
+      if (text) {
+        return { field, value: text };
+      }
+    }
+  }
+
+  return undefined;
+}
+
 export const createChannelPlugin = (runtimes: RuntimeMap) => {
   const accountSecurity = new Map<string, {
     outbound: PluginConfig["outbound"];
@@ -142,10 +187,14 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
         "When replying in the current Telegram chat, omit `to`/`target` and telegram-userbot will send to the current conversation automatically.",
         "Explicit targets may be @username, numeric Telegram user id, phone/contact resolvable by Telegram, group chat ids, or telegram-userbot:<target>.",
         "For Telegram forum topics, send to the group chat id and pass the topic id separately as `threadId`.",
+        "For Telegram attachments, use message action `send` with exactly one of `filePath`, `mediaUrl`, `file`, or `attachmentPath`; use `caption` or `text` for the media caption.",
+        "Local Telegram media paths must be under the configured `media.allowedRoots` and within `media.maxBytes`.",
       ],
       messageToolCapabilities: () => [
         "telegram-userbot can reply in the current Telegram conversation when no explicit target is provided.",
         "telegram-userbot can send text messages to direct chats and groups from the connected personal account.",
+        "telegram-userbot can send media attachments with fields: `filePath`, `mediaUrl`, `file`, `attachmentPath`.",
+        "telegram-userbot accepts `caption` or `text` as the caption for media sends.",
         "telegram-userbot supports Telegram forum topics via the `threadId` parameter on group sends.",
       ],
     },
@@ -1033,7 +1082,15 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
 
         return {
           actions: [ "send" ],
-          capabilities: [],
+          capabilities: [
+            "text",
+            "media:filePath",
+            "media:mediaUrl",
+            "media:file",
+            "media:attachmentPath",
+            "mediaCaption:caption",
+            "mediaCaption:text",
+          ],
         };
       },
 
@@ -1120,6 +1177,72 @@ export const createChannelPlugin = (runtimes: RuntimeMap) => {
           chatId: to,
           replyToId,
         });
+        const mediaParam = readMediaActionParam(params);
+        if (mediaParam) {
+          const rawCaption = (
+            readOptionalActionString(params, "caption") ??
+            readMessageText(params)
+          ).replaceAll("\\n", "\n");
+          const caption = prefixReplyTextToAddress(rawCaption, groupReplyAddress);
+          const safeFile = validateMediaFile({
+            media: resolveAccountMediaPolicy(resolvedAccountId),
+            file: mediaParam.value,
+          });
+
+          if (dryRun) {
+            return jsonResult({
+              ok: true,
+              dryRun: true,
+              media: true,
+              mediaField: mediaParam.field,
+              to,
+              accountId: resolvedAccountId,
+            });
+          }
+
+          const gram = runtimes.get(resolvedAccountId);
+          if (!gram) {
+            throw new Error(`telegram-userbot: runtime not found for account ${resolvedAccountId}`);
+          }
+
+          const sent = await gram.sendMedia({
+            target: to,
+            file: safeFile,
+            caption: caption || undefined,
+            replyToMessageId: resolveReplyToMessageIdForTarget(rawTo, replyToId),
+            messageThreadId,
+          });
+
+          if (
+            sendingToCurrentGroup &&
+            !replyToId &&
+            currentMessageId !== null &&
+            currentMessageId !== undefined
+          ) {
+            rememberVisibleGroupReply({
+              accountId: resolvedAccountId,
+              chatId: to,
+              currentMessageId,
+            });
+          }
+
+          actionLog.info("telegram-userbot handleAction sendMedia completed", {
+            accountId: resolvedAccountId,
+            to,
+            mediaField: mediaParam.field,
+            replyToId: replyToId ?? null,
+            sentMessageId: String((sent as any)?.id ?? ""),
+          });
+
+          return jsonResult({
+            ok: true,
+            media: true,
+            to,
+            accountId: resolvedAccountId,
+            messageId: String((sent as any)?.id ?? ""),
+          });
+        }
+
         const text = prefixReplyTextToAddress(
           readMessageText(params).replaceAll("\\n", "\n"),
           groupReplyAddress,
